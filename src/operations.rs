@@ -180,20 +180,18 @@ impl ProbeSession {
         // HACK: requires a fresh attach
         self.reattach_chip()?;
 
-        let read_protected = self
+        let mut read_protected = self
             .probe
             .send_command(commands::ConfigChip::CheckReadProtect)?;
+        // Skip Unprotect when not protected: the probe firmware mass-erases
+        // the option-byte page, wiping USER/Data/WRPR.
         if read_protected == commands::ConfigChip::FLAG_READ_PROTECTED {
-            log::info!("Flash already unprotected");
+            self.probe.send_command(commands::ConfigChip::Unprotect)?;
+            self.reattach_chip()?;
+            read_protected = self
+                .probe
+                .send_command(commands::ConfigChip::CheckReadProtect)?;
         }
-
-        self.probe.send_command(commands::ConfigChip::Unprotect)?;
-
-        self.reattach_chip()?;
-
-        let read_protected = self
-            .probe
-            .send_command(commands::ConfigChip::CheckReadProtect)?;
         log::info!(
             "Read protected: {}",
             read_protected == commands::ConfigChip::FLAG_READ_PROTECTED
@@ -317,8 +315,16 @@ impl ProbeSession {
             if ret == commands::ConfigChip::FLAG_READ_PROTECTED {
                 log::warn!("Flash is protected, unprotecting...");
                 self.unprotect_flash()?;
-            } else if ret == 2 {
-                self.unprotect_flash()?; // FIXME: 2 is unknown
+            } else if ret == commands::ConfigChip::FLAG_READ_UNPROTECTED {
+                let write_protected = self
+                    .probe
+                    .send_command(commands::ConfigChip::CheckReadProtectEx)?;
+                if write_protected == commands::ConfigChip::FLAG_WRITE_PROTECTED {
+                    log::warn!("Flash is write protected, unprotecting...");
+                    self.unprotect_flash()?;
+                } else if write_protected != commands::ConfigChip::FLAG_WRITE_UNPROTECTED {
+                    log::warn!("Unknown flash write protect status: {}", write_protected);
+                }
             } else {
                 log::warn!("Unknown flash protect status: {}", ret);
             }
