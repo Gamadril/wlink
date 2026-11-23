@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Report CH32M103G8R6 (chip ID `0x10330700`) in `status` output. It shares the CH32L103 chip ID prefix and flashes as a CH32L103.
+- Log the ELF target RISC-V architecture (e.g. `rv32i2p1_m2p0_a2p1_c2p0_zmmul1p0`) when flashing an ELF file.
+- Select a specific WCH-Link by USB serial with `-d VID:PID:SERIAL` (the form `probe-rs` uses in `PROBE_RS_PROBE`) or `-d <SERIAL>`. A plain number still selects by index. This stays stable when probes are replugged or a probe is in DAP mode. Probes without a usable serial are selected by index.
+- Rewrite the WCH-LinkRV protocol reference as a multi-page mdBook site under `docs/protocol/` (USB transport, frame format, full command and `0x0d` subcommand tables, probe info, ESIG, operation flows, DMI, constants and unverified captures), derived from the implementation instead of the outdated 2023 `protocol.md`. Add a workflow that publishes `docs/` to the `gh-pages` branch for <https://ch32-rs.github.io/wlink/>.
+- Support WCH's native Windows driver (`WCHLinkDrv` / `WCHLinkW64.SYS`) on 64-bit Windows: probes bound to it can be opened without replacing the driver with WinUSB/Zadig, are shown by `wlink list`, and are counted by the ambiguous-probe guard. Select them with `-d <INDEX>`: a USB serial selector still requires a WinUSB/libusb driver. The 32-bit CH375 DLL backend remains available on x86 builds and is tried first there.
+
+### Fixed
+
+- Refuse write-like commands (`flash`, `erase`, `unprotect`, `protect`, `write-reg`, `write-mem`, `reset`, `halt`, `resume`, `set-power`, `sdi-print`, `mode-switch`) when several WCH-Links are attached and no `-d` was given, instead of silently using the first one. The error lists a ready-to-copy `-d` selector per RV-mode probe and a `mode-switch --rv` hint for DAP-mode probes.
+- Count probes visible only through the 32-bit Windows CH375 driver; they are offered by index because that backend cannot select by serial.
+
+## [0.1.3] - 2026-10-21
+
+### Added
+
+- Add support for the CH32V407/CH32V467 family (CH32V4X7, riscvchip 0xa6), including chip aliases and DEVID-based package ID reporting.
+- Enable SDI print support for the CH32H41x family (CH32H415/CH32H416/CH32H417).
+- Enable SDI print support for the `reset` command.
+- Add support for the new-generation CH32V205/CH32V203 family (QingKe V3B, riscvchip 0xce), including flashing and CH32V205RCT6 chip ID reporting. Verified against MounRiver Studio traffic captures on a CH32V205RCT6.
+- Support CH586/CH587 (chip_id 0xAB) — BLE 5.4 series.
+- Support CH570/CH572 (chip_id 0x8B) — BLE series.
+- Support CH32M030 (chip_id 0x8E) — motor-control MCU.
+- Add support for the CH32X315/CH32X305 family (QingKe V3F, riscvchip 0xe6), including flashing, SDI print and CH32X315MCU6/CCU6/WCU6, CH32X305RCT6 chip ID reporting. Verified on a CH32X315MCU6 with WCH-LinkE firmware v3.6 (older builds spell it `2.22`).
+- Report the 480KB code flash size for CH32X3x5 when its ESIG flash size field is unprogrammed (reads as erased flash, `0xE339`), matching WCH-LinkUtility.
+
+### Changed
+
+- Document that CH59x series devices have a broken auto-detect mechanism and may need an explicit `--chip` selection.
+
+### Fixed
+
+- Log CLI timestamps in the local timezone instead of UTC.
+- Decode the WCH-Link firmware version from its packed form, so versions above `2.15` are reported correctly.
+- Decode CH32V4x7 chip IDs from the DEVID nibble so CH32V407/CH32V467 packages are reported correctly instead of all matching as CH32V407VET.
+- Fix Cargo manifest warnings.
+
 ## [0.1.2] - 2026-05-01
 
 ### Added

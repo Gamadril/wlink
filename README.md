@@ -29,7 +29,7 @@
 - [x] Enable or Disable 3.3V, 5V output
 - [x] [SDI print](https://www.cnblogs.com/liaigu/p/17628184.html) support, requires 2.10+ firmware
 - [x] [Serial port watching](https://github.com/ch32-rs/wlink/pull/36) for a smooth development experience
-- [x] Windows native driver support, no need to install libusb manually (requires x86 build)
+- [x] Windows native driver support (WCHLinkDrv), no WinUSB/libusb driver needed; works on x86, x64 and ARM64 (nightly builds currently ship x86/x64 Windows binaries, so build from source on ARM64)
 
 ## Tested On
 
@@ -68,8 +68,15 @@ Current firmware version: 2.15 (aka. v35).
 - [ ] [CH32V317] - I don't have this chip, help wanted
 - [CH641]
 - [CH32X035]/CH32X033
-- [CH32L103]
+- [CH32L103]/[CH32M103]
 - [CH32H417]
+- [CH570]/CH572
+- [CH586]/CH587
+- [CH32M030]
+- [CH32V205]/CH32V203(QingKe V3B) - the new-generation CH32V205/CH32V203 family (USB2.0 HS), unrelated to the older [CH32V203]. Requires WCH-LinkE firmware v3.6+ (older builds spell it `2.22`); older firmware misdetects it as CH32V20X with garbage ChipID/ESIG
+- [CH32V407]
+- [CH32V467]
+- [CH32X315]/CH32X305
 - [ ] [CH8571] - No other source about this chip, help wanted
 - ... (Feel free to open an issue if you have tested on other chips)
 
@@ -81,25 +88,35 @@ Current firmware version: 2.15 (aka. v35).
 [CH32V317]: https://www.wch.cn/products/CH32V317.html
 [CH32X035]: https://www.wch-ic.com/products/CH32X035.html
 [CH32L103]: https://www.wch-ic.com/products/CH32L103.html
+[CH32M103]: https://www.wch.cn/products/CH32M103.html
 [CH569]: https://www.wch-ic.com/products/CH569.html
 [CH573]: https://www.wch-ic.com/products/CH573.html
 [CH583]: https://www.wch-ic.com/products/CH583.html
 [CH585]: https://www.wch-ic.com/products/CH585.html
+[CH586]: https://www.wch-ic.com/products/CH586.html
+[CH570]: https://www.wch-ic.com/products/CH570.html
+[CH32M030]: https://www.wch.cn/products/CH32M030.html
 [CH592]: https://www.wch-ic.com/products/CH592.html
 [CH641]: https://www.wch-ic.com/products/CH641.html
 [CH643]: https://www.wch-ic.com/products/CH643.html
 [CH8571]: https://www.wch.cn/news/606.html
 [CH32H417]: https://www.wch-ic.com/products/CH32H417.html
+[CH32V205]: https://www.wch-ic.com/products/CH32V205.html
+[CH32V407]: https://www.wch.cn/products/CH32V407.html
+[CH32V467]: https://www.wch.cn/products/CH32V467.html
+[CH32X315]: https://www.wch-ic.com/products/CH32X315.html
 
 ## Install
 
 `cargo install --git https://github.com/ch32-rs/wlink` or download a binary from the [Nightly Release page](https://github.com/ch32-rs/wlink/releases/tag/nightly).
 
+### Linux
+
 > **Note**
 > On Linux, you should install libudev and libusb development lib first.
 > Like `sudo apt install libudev-dev libusb-1.0-0-dev` on Ubuntu.
 
-### Arch Linux
+#### Arch Linux
 
 Arch Linux users can install [wlink-git](https://aur.archlinux.org/packages/wlink-git) via the AUR.
 
@@ -107,10 +124,85 @@ Arch Linux users can install [wlink-git](https://aur.archlinux.org/packages/wlin
 yay -Syu wlink
 ```
 
+### Windows drivers
+
+On Windows, wlink tries these backends in order and uses the first one that
+can open the probe:
+
+1. the legacy `WCHLinkDLL.dll` / CH375 driver — 32-bit builds only;
+2. WCH's native driver (`WCHLinkDrv` / `WCHLinkW64.SYS`, installed by WCH's
+   WCH-Link tooling) — 64-bit Windows (x64 and ARM64). The backend also
+   compiles for x86, but WCH ships no 32-bit build of that driver;
+3. WinUSB via [Zadig](https://zadig.akeo.ie) (nusb/libusb) — all platforms.
+
+A probe is bound to one driver for I/O. nusb can still *enumerate* a probe
+bound to WCH's native driver (and report its USB serial number), but it cannot
+open that interface — only the native driver can. Serial selectors
+(`-d 1a86:8010:<SERIAL>`) therefore require WinUSB; with the native or CH375
+driver use `-d <INDEX>` instead. wlink says so when a serial fails to open, and
+`-d <SERIAL>` never silently falls back to an index.
+
+See the [USB transport reference](docs/protocol/usb-transport.md#native-driver-ioctl)
+for the native driver's IOCTL layout.
+
 ## Usage
 
 > **Note**
 > For help of wire connection for specific chips, please refer to `docs` subdirectory.
+
+### Selecting a probe
+
+`-d` picks which WCH-Link to use. Without it wlink takes the first one it
+enumerates, which is not deterministic when several probes are attached, or
+when one of them is in DAP mode. Because that could modify the wrong board,
+write-like commands (`flash`, `erase`, `unprotect`, `protect`, `write-reg`,
+`write-mem`, `reset`, `halt`, `resume`, `set-power`, `sdi-print`,
+`mode-switch`) refuse to run when more than one probe is attached and no `-d`
+was given (probes in both RV and DAP mode are counted). Read-only commands
+such as `status`, `regs`, `dump` and `list` keep the first-probe behaviour.
+The error lists every RV-mode probe with a `-d` selector that can be copied
+into the command:
+
+```console
+> wlink flash firmware.bin
+Error: 3 WCH-Link probes attached; refusing to continue without an explicit probe.
+Select one of the following with `-d` (a serial stays stable across replugs when available; `wlink list` shows details):
+  -d 1a86:8010:7E238F0602BE     # WCH-Link#0 (RV mode)
+  -d 1a86:8010:F93D8F067E10     # WCH-Link#1 (RV mode)
+  -d 1a86:8010:D7708F065C7F     # WCH-Link#2 (RV mode)
+
+> wlink -d 1a86:8010:D7708F065C7F flash firmware.bin
+```
+
+A probe in DAP mode still counts toward the check, but cannot be used: it is
+listed separately with the command to switch it back to RV mode first,
+`wlink -d 1a86:8012:<SERIAL> mode-switch --rv`.
+
+When a probe does not expose a USB serial number, or is reachable through an
+index-only Windows driver (CH375 on 32-bit, or WCH's native WCHLinkDrv), the
+error offers `-d <INDEX>` instead and keeps the serial in the description to
+help identify the probe. The index is resolved by the backend that actually
+opens the probe, whose enumeration order need not match nusb's, so the serial
+shown beside it is a hint rather than a guarantee. Indices also change when a
+probe is replugged or switches mode, so prefer the serial form when it is
+offered.
+
+A serial names one probe reliably:
+
+```console
+> wlink list
+<WCH-Link#0 nusb device> ID 1a86:8010 Serial F93D8F067E10 (USB-FS 12 Mbps) (RV mode)
+<WCH-Link#1 nusb device> ID 1a86:8010 Serial D7708F065C7F (USB-FS 12 Mbps) (RV mode)
+
+> wlink -d 1a86:8010:D7708F065C7F status
+> wlink -d D7708F065C7F status          # serial alone works too
+```
+
+The `VID:PID:SERIAL` form is the same string `probe-rs` accepts in
+`PROBE_RS_PROBE`, so a serial copied from `probe-rs list` works unchanged. The
+IDs are accepted for compatibility; wlink still searches its own known VID/PID
+pairs, which lets one serial select the probe in either RV or DAP mode. A plain
+number keeps the original index behaviour.
 
 ```console
 > # Flash firmware.bin to Code FLASH at address 0x08000000
@@ -205,6 +297,11 @@ wlink status
 **Terminology:**
 - **System FLASH** - The bootloader area (boot from system)
 - **Code FLASH** - The user application area (boot from user code)
+
+## Documentation
+
+- [WCH-LinkRV protocol reference](docs/protocol/overview.md) — frame format, command tables, operation flows and constants, rebuilt from the source code. Also published at <https://ch32-rs.github.io/wlink/> once GitHub Pages is enabled (built with mdBook from `docs/`).
+- [Chip wiring and part-number notes](docs/references.md) — see the `docs/` subdirectory for per-family connection guides.
 
 ## References
 
